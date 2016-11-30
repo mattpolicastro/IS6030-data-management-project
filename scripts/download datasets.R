@@ -19,29 +19,34 @@ incidents <- read.socrata(
   app_token = config$socrata_token
 )
 
-# Declare data file locations
-permits_file <- paste0(working_dir, "/data/permits")
-incidents_file <- paste0(working_dir, "/data/incidents")
-# Declare data file locations with datetime
-permits_file_latest <- paste0(permits_file, "_", Sys.time())
-incidents_file_latest <- paste0(incidents_file, "_", Sys.time())
-
-# Write out the downloaded datasets
-write.csv(permits, file = permits_file_latest, row.names = FALSE)
-write.csv(incidents, file = incidents_file_latest, row.names = FALSE)
-
 # Function to safely store and symlink latest dataset
-store_data <- function(canonical, latest) {
-  if (file.exists(latest)) {
-    if (file.exists(canonical)) {
-      file.remove(canonical)
+store_data <- function(data) {
+  # Reference to location in filesystem
+  working_dir <- getwd()
+  
+  # Reference to name of current dataset
+  data_name <- substitute(data)
+  
+  # Reference data file and symlink
+  data_symlink <- paste0(working_dir, "/data/", data_name, ".csv")
+  data_file <- paste0(working_dir, "/data/", data_name, "_", Sys.Date(), ".csv")
+  
+  # Write data to file system
+  write.csv(data, file = data_file, row.names = FALSE)
+  
+  # Safety check and symlink latest file
+  if (file.exists(data_file)) {
+    # If the symlink exists, remove it
+    if (file.exists(data_symlink)) {
+      file.remove(data_symlink)
     }
-    file.symlink(latest, canonical)
+    # Symlink the latest data 
+    file.link(data_file, data_symlink)
   } else {
-    message(paste("Unable to find most recent version of data in", latest))
+    message(paste("Unable to find most recent version of data in", latest_csv))
   }
 }
 
 # Store the latest data and update links
-store_data(permits_file, permits_file_latest)
-store_data(incidents_file, incidents_file_latest)
+store_data(permits)
+store_data(incidents)
