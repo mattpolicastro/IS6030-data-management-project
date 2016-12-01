@@ -1,8 +1,5 @@
-# Get working directory
-working_dir <- getwd() 
-
 # Load config values
-source(paste0(working_dir, "/config.R"))
+source(paste0(getwd(), "/config.R"))
 # Re-declare the config list to stop lintr from throwing missing object warnings
 config <- config
 
@@ -19,7 +16,7 @@ incidents <- read.socrata(
   app_token = config$socrata_token
 )
 
-# Function to safely store and symlink latest dataset
+# Function to safely store and link latest dataset
 store_data <- function(data) {
   # Reference to location in filesystem
   working_dir <- getwd()
@@ -31,8 +28,9 @@ store_data <- function(data) {
   data_symlink <- paste0(working_dir, "/data/", data_name, ".csv")
   data_file <- paste0(working_dir, "/data/", data_name, "_", Sys.Date(), ".csv")
   
-  # Write data to file system
-  write.csv(data, file = data_file, row.names = FALSE)
+  # Write data to file system - set NA/missing values to "" or SQL imports will
+  # error out
+  write.csv(data, file = data_file, na = "", row.names = FALSE)
   
   # Safety check and symlink latest file
   if (file.exists(data_file)) {
@@ -50,3 +48,6 @@ store_data <- function(data) {
 # Store the latest data and update links
 store_data(permits)
 store_data(incidents)
+
+# Clean up environment
+rm(list = ls())
