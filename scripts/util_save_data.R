@@ -1,3 +1,6 @@
+source(paste0(getwd(), "/config.R"))
+config <- config
+
 # Function to safely store and link latest dataset
 filesystem_save <- function(data) {
   # Reference to location in filesystem
@@ -30,7 +33,7 @@ filesystem_save <- function(data) {
 # Function to safely save full dataset to database
 database_save <- function(data) {
   # Open database connection, presuming Windows Domain Auth is configured
-  sql_server <- RODBC::odbcConnect("SQL Server")
+  sql_server <- RODBC::odbcConnect(config$odbc_driver_name)
   
   # Reference name of current dataset
   data_name <- as.character(substitute(data))

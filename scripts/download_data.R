@@ -3,12 +3,13 @@ source(paste0(getwd(), "/config.R"))
 config <- config
 
 # Load utility functions and re-declare for lintr
-source(paste0(getwd(), "/utils_save_data.R"))
+source(paste0(getwd(), "/scripts/util_save_data.R"))
 filesystem_save <- filesystem_save
 database_save <- database_save
 
 # Load the Socrata API client
 library(RSocrata)
+
 
 # Download permits dataset
 permits <- read.socrata(
@@ -28,5 +29,3 @@ filesystem_save(incidents)
 # Insert data into database
 database_save(permits)
 database_save(incidents)
-
-
