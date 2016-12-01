@@ -2,29 +2,257 @@
 title: 'IS 6030 Homework #5'
 author: "Matt Policastro"
 date: "December 1, 2016"
-output: word_document
+output: 
+  word_document:
+    df_print: kable
 ---
 
 ```{r setup, include=FALSE}
-knitr::opts_chunk$set(echo = TRUE)
+knitr::opts_chunk$set(echo = F)
+
+# Load config values and re-declare object to stop lintr warnings
+source(paste0(getwd(), "/config.R"))
+config <- config
+
+# Load dependencies
+library(dplyr)
+library(knitr)
+library(magrittr)
+library(RODBC)
+
+# Open database connection for queries
+sql_server <- odbcConnect(config$odbc_driver_name)
+
+permits <- sqlQuery(sql_server, "SELECT * FROM dbo.permits;", as.is = T)
 ```
 
-## R Markdown
+## Introduction
 
-This is an R Markdown document. Markdown is a simple formatting syntax for authoring HTML, PDF, and MS Word documents. For more details on using R Markdown see <http://rmarkdown.rstudio.com>.
+For this assignment, I examined building permit and fire incident data provided by the City of Cincinnati through their [open data portal](https://data.cincinnati-oh.gov/) hosted with [Socrata](https://socrata.com/) For most of the analysis below, my rough hypothesis was that the number of building permits issued to an address in the city would increase following a fire incident. Using SQL and R, I attempted to identify patterns or trends that might support that hypothesis.
 
-When you click the **Knit** button a document will be generated that includes both content as well as the output of any embedded R code chunks within the document. You can embed an R code chunk like this:
+## The Data
 
-```{r cars}
-summary(cars)
+### Overview
+
+The data used in this analysis was sourced from the City of Cincinnati's open data portal:
+
+* [Cincinnati Building Permits](https://data.cincinnati-oh.gov/Thriving-Healthy-Neighborhoods/Cincinnati-Building-Permits/uhjb-xac9)
+* [NFIRS Cincinnati Fire Department Incident Data](https://data.cincinnati-oh.gov/Safer-Streets/2010-NFIRS-Cincinnati-Fire-Department-Incident-Dat/jg8x-w2hj)
+
+Each data set is fairly self-explanatory: the permits data set includes descriptions, dates, locations, and other metadata for residential and commercial building permits issued in the city; the incidents data set describes emergency responses from the Fire Department in accordance with the [National Fire Incident Reporting System (NFIRS).](https://www.nfirs.fema.gov/) (As these data sets include 31 and 19 columns respectively, a full examination can be found in this report's appendix, under "Description of Fields".)
+
+### Normalisation
+
+However, this data is completely unnormalised. Some fields, such as ORIGINALCITY are completely redundant as they only include one value, while others include one-to-one mappings of acronyms and abbreviations. Thankfully, the field names associated with the data set describe a fairly competent schema for seperating concerns.
+
+THis schema would entail the following:
+
+# INSERT DB SCHEMA HERE
+
+### Problems
+
+There were a substantial number of duplicate PERMITNUMBERS, which should by all accounts be unique (`r length(unique(permits$PERMITNUM)) - nrow(permits)` PERMITNUMBERS were duplicates).
+
+## Analysis
+
+We start our broad summary of the data with a general permit profile:
+
+```{r}
+sqlQuery(sql_server, "
+SELECT 
+  COUNT(*) AS 'Total Records', 
+  AVG(TOTALSQFT) AS 'Avg. Project Size, Sq. Ft.',
+  ROUND(AVG(ESTPROJECTCOSTDEC), 2) AS 'Avg. Estimated Cost ($)',
+  ROUND(AVG(FEE), 2) AS 'Avg. Permit Fee ($)'
+FROM dbo.permits;
+") %>% kable()
 ```
 
-## Including Plots
+However, we can see there are distinct differences in these project profiles when broken down by project type, though the overall split in number of records is relatively even:
 
-You can also embed plots, for example:
-
-```{r pressure, echo=FALSE}
-plot(pressure)
+```{r}
+sqlQuery(sql_server, "
+SELECT 
+  PERMITCLASSMAPPED AS 'Project Type',
+  COUNT(*) AS 'Total Records', 
+  AVG(TOTALSQFT) AS 'Avg. Project Size, Sq. Ft.',
+  ROUND(AVG(ESTPROJECTCOSTDEC), 2) AS 'Avg. Estimated Cost ($)',
+  ROUND(AVG(FEE), 2) AS 'Avg. Permit Fee ($)'
+FROM dbo.permits
+GROUP BY PERMITCLASSMAPPED
+ORDER BY COUNT(*) DESC;
+") %>% kable()
 ```
 
-Note that the `echo = FALSE` parameter was added to the code chunk to prevent printing of the R code that generated the plot.
+## Appendix
+
+### Challenges
+
+As is usually the case when extracting data from an API, data type handling posed a recurring challenge—particularly dates. The actual data source (the Socrata platform used by the City) had surprisingly few data categories; in this analysis I only encountered plain text, date/time, money, and numbers. I did not investigate if other data types are supported by Socrata or if this is merely an issue with how data ingestion was configured by the City.
+
+Somewhat similarly, The [`RSocrata`](https://github.com/Chicago/RSocrata) package developed by the City of Chicago (used to extract the data sets) treats dates as POSIXct/POSIXt, but timezone handling did not appear to be correct. As the default time stamp across the data set appeared to be 7:00 PM EST (8:00 PM DST), many dates were shifted forward by one day when interpreted as UTC/GMT dates. Thusly, I chose not to go any deeper and transformed these date fields into character strings before insertion into the database, as my analysis was primarily concerned with date proximity rather than specific times. Any analysis done in SQL then re-cast these fields as date objects.
+
+Finally, time constraints made themselves known. I had originally intended to include data regarding fire incidents and to see if I could identify and correlations between the two sets, but manipulating and configuring the data ingestion ended up being too cumbersome to complete the full analysis.
+
+### Authoring Tools
+
+This report was primarily authored in [R Studio](https://www.rstudio.com/products/RStudio/) using R Markdown and its inline code rendering features to dynamically update values as new records are added to the data set All source code (R, SQL, etc.), data, and other materials used in the project can be found at [this Github repository](https://github.com/mattpolicastro/IS6030-data-management-project) with full version history. A brief overview of the project structure can be found below.
+
+#### data/
+
+Stored versions of the data set, as well as a symlinked version for other scripts to hook onto.
+
+#### packrat/
+
+This project used [`Packrat`](https://github.com/rstudio/packrat) to manage library and package dependencies across platforms (primarily macOS and Windows 10).
+
+#### scripts/
+
+Various utility scripts to download data, configure the database, etc.
+
+#### IS 6030 Final.Rproj
+
+The project was done almost entirely within R Studio—this file contains project settings and configurations.
+
+#### README.md
+
+A brief overview of the project and git repository.
+
+#### report.Rmd
+
+The source file for the final report document, which is rendered via R Markdown/knitr to a Microsoft Office Word document.
+
+### Datasets
+
+#### Description of Fields
+
+**PERMITNUM**, *text*
+
+The year of submission and incremented, five-digit ID number delimited by a 'P'. There appears to be some duplication, as there were only `r length(unique(permits$PERMITNUM))` of `r nrow(permits)` unique records.
+
+**DESCRIPTION**, *text*
+
+A short description of the permit type (e.g. "HVAC"), with `r length(levels(as.factor(permits$DESCRIPTION)))` unique categories.
+
+**APPLIEDDATE**, *date*
+
+The date the permit was filed for approval. Earliest date was `r min(permits$APPLIEDDATE)`; latest date was `r max(permits$APPLIEDDATE)`.
+
+**ISSUEDDATE**, *date*
+
+The date the permit was issued. Earliest date was `r min(as.Date(permits$ISSUEDDATE))`; latest date was `r max(as.Date(permits$ISSUEDDATE))`
+
+**COMPLETEDDATE**, *date*
+
+The date the permit was completed. Earliest date was `r min(as.Date(permits$COMPLETEDDATE))`; latest date was `r max(as.Date(permits$COMPLETEDDATE))`
+
+**ORIGINALADDRESS1**, *text*
+
+The address associated with the permit filing.
+
+**ORIGINALCITY**, *text*
+
+The city of the address associated with the permit filing (all permits were either filed in Cincinnati or were missing this field).
+
+**ORIGINALSTATE**, *text*
+
+The state of the address associated with the permit filing as a two-letter code (all permits were filed in the state of Ohio, e.g. "OH").
+
+**ORIGINALZIP**, *text*
+
+The ZIP code of the address associated with the permit filing. There were `r length(unique(permits$ORIGINALZIP))` unique ZIP codes represented.
+
+**JURISDICTION**, *text*
+
+The legal jurisdiction the permit was filed in. All permits were filed in Cincinnati.
+
+**PERMITCLASS**, *text*
+
+Coded representation of the permit class (either OBC, RCO, or Non-Standard).
+
+**PERMITCLASSMAPPED**, *text*
+
+The permit class as human-readable text, mapped one-to-one with the PERMITCLASS.
+
+**STATUSCURRENT**, *text*
+
+The current permit status, covering a range of states (e.g. "ISSUED", "HOLD", "CAGIS").
+
+**STATUSCURRENTMAPPED**, *text*
+
+A slightly more human-readable mapping of STATUSCURRENT, mapped one-to-one with that field.
+
+**WORKCLASS**, *text*
+
+The work type of the permit, coded as abbreviations and acronyms, with `r length(unique(permits$WORKCLASS))` levels.
+
+**WORKCLASSMAPPED**, *text*
+
+The work type of the permit in human-readable text; either "Existing" or "New".
+
+**PERMITTYPE**, *text*
+
+The permit type as coded categories (`r length(unique(permits$PERMITTYPE))` levels).
+
+**PERMITTYPEMAPPED**, *text*
+
+The permit type as human-readable text, mapped many-to-many with PERMITTYPE.
+
+**COMPANYNAME**, *text*
+
+The business entity applying for the permit (`r length(unique(permits$COMPANYNAME))` levels).
+
+**TOTALSQFT**, *number*
+
+The total square footage of the work site. Many missing or zero-value values (`r permits %>% filter(is.na(TOTALSQFT) || TOTALSQFT == 0) %>% nrow()` entries).
+
+**ESTPROJECTCOSTDEC**, *number/text*
+
+Estimated project cost. This is probably a decimal value in the original data, but is coerced to text when uploaded to Socrata.
+
+**ESTPROJECTCOSTTEXT**, *text*
+
+Identical to ESTPROJECTCOSTDEC, except stored as text in the original data.
+
+**UNITS**, *number*
+
+Presumably the number of sub-residences (e.g. apartments) that fall under the building permit. At most, `r max(permits$UNITS)` units were filed for in one permit.
+
+**PIN**, *text*
+
+Project Identification Number? A 11-or-12 digit identification number, missing from some projects (presumably due to not being part of a larger project registered with the city).
+
+**PROPOSEDUSE**, *text*
+
+Coded entries for the proposed project use (e.g. "A-2 (1)"), presumably referenced from the building code.
+
+**EXPIRESDATE**, *date*
+
+The date of expiry for the permit.
+
+**COISSUEDDATE**, *date*
+
+Presumably a field to reference a previous permit issuance, as all dates here fell earlier than the expiry dates.
+
+**FEE**, *money*
+
+The fee (in dollars) associated with the permit. This appears to be the processing fee assessed by the city.
+
+**LINK**, *text*
+
+The URL for the permit's full information page in the Cincinnati Area Geographic Information Systems (CAGIS) website.
+
+**LATITUDE**, *number*
+
+The geographic latitude of the project site (presumably used in CAGIS).
+
+**LONGITUDE**, *number*
+
+The geographic longitude of the project site (presumably used in CAGIS).
+
+```{r include = F, echo = F}
+# Close all database connections
+odbcCloseAll()
+```
+
+
