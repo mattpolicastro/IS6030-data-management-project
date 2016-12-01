@@ -2,6 +2,8 @@
 .Rhistory
 .RData
 .Ruserdata
+*.xls
+*.xlsx
 config.R
 packrat/lib*/
 packrat/src/
