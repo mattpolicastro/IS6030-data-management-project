@@ -8,7 +8,7 @@ output:
 ---
 
 ```{r setup, include=FALSE}
-knitr::opts_chunk$set(echo = F)
+knitr::opts_chunk$set(echo = F, warning = F, message = F, fig.width = 6.5)
 
 # Load config values and re-declare object to stop lintr warnings
 source(paste0(getwd(), "/config.R"))
@@ -16,6 +16,7 @@ config <- config
 
 # Load dependencies
 library(dplyr)
+library(ggplot2)
 library(knitr)
 library(magrittr)
 library(RODBC)
@@ -34,28 +35,48 @@ For this assignment, I examined building permit and fire incident data provided 
 
 ### Overview
 
-The data used in this analysis was sourced from the City of Cincinnati's open data portal:
-
-* [Cincinnati Building Permits](https://data.cincinnati-oh.gov/Thriving-Healthy-Neighborhoods/Cincinnati-Building-Permits/uhjb-xac9)
-* [NFIRS Cincinnati Fire Department Incident Data](https://data.cincinnati-oh.gov/Safer-Streets/2010-NFIRS-Cincinnati-Fire-Department-Incident-Dat/jg8x-w2hj)
-
-Each data set is fairly self-explanatory: the permits data set includes descriptions, dates, locations, and other metadata for residential and commercial building permits issued in the city; the incidents data set describes emergency responses from the Fire Department in accordance with the [National Fire Incident Reporting System (NFIRS).](https://www.nfirs.fema.gov/) (As these data sets include 31 and 19 columns respectively, a full examination can be found in this report's appendix, under "Description of Fields".)
+The data used in this analysis was a set of building permits, sourced from the City of Cincinnati's [open data portal.](https://data.cincinnati-oh.gov/Thriving-Healthy-Neighborhoods/Cincinnati-Building-Permits/uhjb-xac9) This data set includes descriptions, dates, locations, and other metadata for residential and commercial building permits issued in the city. (As the data set includes thirty-one columns, a full description of columns can be found in the Appendix under "Description of Fields".)
 
 ### Normalisation
 
-However, this data is completely unnormalised. Some fields, such as ORIGINALCITY are completely redundant as they only include one value, while others include one-to-one mappings of acronyms and abbreviations. Thankfully, the field names associated with the data set describe a fairly competent schema for seperating concerns.
+However, this data is completely unnormalised. Some fields, such as ORIGINALCITY are completely redundant as they only include one value, while others include one-to-one mappings of acronyms and abbreviations. Furthermore, fields like PERMITSTATUS appear to be updated in-place, so tracking changes over time is difficult.
 
-THis schema would entail the following:
+Thankfully, the field names associated with the data set describe a fairly competent schema for seperating concerns. This schema would entail the following:
 
 # INSERT DB SCHEMA HERE
 
 ### Problems
 
-There were a substantial number of duplicate PERMITNUMBERS, which should by all accounts be unique (`r length(unique(permits$PERMITNUM)) - nrow(permits)` PERMITNUMBERS were duplicates).
+There were a substantial number of duplicate entries in PERMITNUMBER, which should by all accounts be unique (`r nrow(permits) - length(unique(permits$PERMITNUM))` were duplicates). And, as is detailed more fully in "Challenges" in the Appendix, bad data typing and column redundancy were fairly common.
+
+\pagebreak
 
 ## Analysis
 
-We start our broad summary of the data with a general permit profile:
+I began with a broad summary of the data set:
+
+```{r}
+# Plot permits issued over time
+sqlQuery(sql_server, "
+SELECT ISSUEDDATE, COUNT(*) AS PermitsIssued
+FROM dbo.permits
+GROUP BY ISSUEDDATE
+HAVING ISSUEDDATE IS NOT NULL;
+") %>%
+  mutate(ISSUEDDATE = as.Date(ISSUEDDATE)) %>%
+  ggplot(aes(x = ISSUEDDATE, y = PermitsIssued)) +
+  geom_point(alpha = .3) +
+  geom_smooth(colour = "forestgreen") +
+  labs(
+    title = "Permits Issued over Time",
+    x = "Date Issued",
+    y = "# Permits Issued"
+  )
+  
+
+```
+
+The rate at which permits are issued is relatively constant, though there appears to be some groth over the last year or so. 
 
 ```{r}
 sqlQuery(sql_server, "
@@ -65,24 +86,191 @@ SELECT
   ROUND(AVG(ESTPROJECTCOSTDEC), 2) AS 'Avg. Estimated Cost ($)',
   ROUND(AVG(FEE), 2) AS 'Avg. Permit Fee ($)'
 FROM dbo.permits;
-") %>% kable()
+") %>% kable(caption = "Summary")
 ```
 
-However, we can see there are distinct differences in these project profiles when broken down by project type, though the overall split in number of records is relatively even:
+However, there are distinct differences in these project profiles when broken down by project type—though the overall split in number of records was relatively even (between Residential and Non-Residential, at least). 
 
 ```{r}
 sqlQuery(sql_server, "
 SELECT 
   PERMITCLASSMAPPED AS 'Project Type',
   COUNT(*) AS 'Total Records', 
-  AVG(TOTALSQFT) AS 'Avg. Project Size, Sq. Ft.',
+  AVG(TOTALSQFT) AS 'Avg. Project Size ($Ft.^2$)',
   ROUND(AVG(ESTPROJECTCOSTDEC), 2) AS 'Avg. Estimated Cost ($)',
   ROUND(AVG(FEE), 2) AS 'Avg. Permit Fee ($)'
 FROM dbo.permits
 GROUP BY PERMITCLASSMAPPED
 ORDER BY COUNT(*) DESC;
-") %>% kable()
+") %>% kable(caption = "Summary by Permit Type")
 ```
+
+And, as there were so few records that fell into "Other", they were exlcluded moving forward. That said, the differences between Residential and Non-Residential were rather substantial. I visualised the data to identify any potential patterns.
+
+```{r}
+query_result <- sqlQuery(sql_server, "
+SELECT 
+  CAST(ESTPROJECTCOSTDEC as DECIMAL) AS 'EstCost',
+  PERMITCLASSMAPPED AS 'ProjectType',
+  TOTALSQFT AS 'SqFt'
+FROM dbo.permits
+WHERE PERMITCLASSMAPPED != 'Other';
+") 
+
+# Create scatterplot
+query_result %>% 
+  ggplot(aes(
+    x = SqFt, 
+    y = EstCost, 
+    colour = ProjectType)
+  ) +
+  geom_point(alpha = 0.333) +
+  labs(
+    title = "Costs over Sq. Footage by Project Type", 
+    x = "Square Footage", 
+    y = "Estimated Cost", 
+    colour = "Project Type"
+  )
+
+# Create boxplot for EstCost
+query_result %>%
+  mutate(EstCost = EstCost) %>%
+  ggplot(aes(x = "", y = EstCost, colour = ProjectType)) + 
+  geom_boxplot() + 
+  facet_grid(. ~ ProjectType) +
+  labs(
+    title = "Estimated Cost by Project Type",
+    ylab = "Estimated Cost",
+    xlab = ""
+  )
+
+# Create boxplot for EstCost
+query_result %>%
+  mutate(EstCost = SqFt) %>%
+  ggplot(aes(x = "", y = SqFt, colour = ProjectType)) + 
+  geom_boxplot() + 
+  facet_grid(. ~ ProjectType) +
+  labs(
+    title = "Square Footage by Project Type",
+    ylab = "Square Footage",
+    xlab = ""
+  )
+
+
+rm(query_result)
+```
+
+Clearly, there were some enormous projects—and a lot of missing or zero-value entries. I tried these visualisations again, but excluded the missing/zero-value data and re-scaled the rest. 
+
+```{r}
+query_result <- sqlQuery(sql_server, "
+SELECT 
+  CAST(ESTPROJECTCOSTDEC as DECIMAL) AS 'EstCost',
+  PERMITCLASSMAPPED AS 'ProjectType',
+  TOTALSQFT AS 'SqFt'
+FROM dbo.permits
+WHERE (
+  TOTALSQFT IS NOT NULL 
+AND
+  TOTALSQFT != 0 
+AND 
+  PERMITCLASSMAPPED != 'Other'
+AND 
+  ESTPROJECTCOSTDEC != 0
+);
+") 
+
+scaling_factor <- 1/10
+
+query_result %<>% mutate(SqFt = SqFt ^ scaling_factor, EstCost = EstCost ^ scaling_factor)
+
+# Create scatterplot
+query_result %>% 
+  ggplot(aes(
+    x = SqFt, 
+    y = EstCost, 
+    colour = ProjectType)
+  ) +
+  geom_point(alpha = 0.333) +
+  labs(
+    title = "Costs over Sq. Footage by Project Type", 
+    subtitle = expression(italic("Re-scaled by a power of 1/10")),
+    x = "Square Footage", 
+    y = "Estimated Cost", 
+    colour = "Project Type"
+  )
+
+# Create boxplot for EstCost
+query_result %>%
+  mutate(EstCost = EstCost) %>%
+  ggplot(aes(x = "", y = EstCost, colour = ProjectType)) + 
+  geom_boxplot() + 
+  facet_grid(. ~ ProjectType) +
+  labs(
+    title = "Estimated Cost by Project Type",
+    subtitle = expression(italic("Re-scaled by a power of 1/10")),
+    ylab = "Estimated Cost",
+    xlab = ""
+  )
+
+# Create boxplot for EstCost
+query_result %>%
+  mutate(EstCost = SqFt) %>%
+  ggplot(aes(x = "", y = SqFt, colour = ProjectType)) + 
+  geom_boxplot() + 
+  facet_grid(. ~ ProjectType) +
+  labs(
+    title = "Square Footage by Project Type",
+    subtitle = expression(italic("Re-scaled by a power of 1/10")),
+    ylab = "Square Footage",
+    xlab = ""
+  )
+
+rm(query_result, scaling_factor)
+```
+
+The re-scaling showed there are still some enormous values in the data, but there were also some fairly clear linear tendencies in the scatter plot. I proceeded to develop a linear model through backward selection.
+
+```{r}
+sql_query <- "
+SELECT 
+  CAST(ESTPROJECTCOSTDEC as DECIMAL) AS EstCost,
+  PERMITCLASSMAPPED AS ProjectType,
+  TOTALSQFT AS SqFt,
+  WORKCLASSMAPPED AS WorkClass,
+  UNITS AS Units
+FROM dbo.permits
+WHERE (
+  TOTALSQFT IS NOT NULL 
+AND
+  TOTALSQFT != 0 
+AND 
+  PERMITCLASSMAPPED != 'Other'
+AND 
+  ESTPROJECTCOSTDEC != 0
+);
+"
+# 
+sql_result <- sqlQuery(sql_server, sql_query)
+
+est_cost_model <- lm(EstCost ~ ., data = sql_result)
+summary(est_cost_model)
+
+rm(sql_result)
+```
+
+After experimenting with different model fits, Project Type classification ended up being a significant predictor, but not by much when compared to its peers. And, although the F-test for overall significance was great, the small $R^2$ indicated there was a great deal of room for improvement in the model fit.
+
+### Conclusions
+
+All together, the permits data set gives us some idea of building activity in the city of Cincinnati, but is somewhat lacking with respect to structure, data integrity, and utility. Moving forward, I would rather like to see the city better develop their documentation for their various data sets on Socrata—there were a number of times that I would want to learn more but was faced with a relatively inscrutable heap of data.
+
+
+
+\pagebreak
+\pagebreak
+
+
 
 ## Appendix
 
@@ -91,6 +279,8 @@ ORDER BY COUNT(*) DESC;
 As is usually the case when extracting data from an API, data type handling posed a recurring challenge—particularly dates. The actual data source (the Socrata platform used by the City) had surprisingly few data categories; in this analysis I only encountered plain text, date/time, money, and numbers. I did not investigate if other data types are supported by Socrata or if this is merely an issue with how data ingestion was configured by the City.
 
 Somewhat similarly, The [`RSocrata`](https://github.com/Chicago/RSocrata) package developed by the City of Chicago (used to extract the data sets) treats dates as POSIXct/POSIXt, but timezone handling did not appear to be correct. As the default time stamp across the data set appeared to be 7:00 PM EST (8:00 PM DST), many dates were shifted forward by one day when interpreted as UTC/GMT dates. Thusly, I chose not to go any deeper and transformed these date fields into character strings before insertion into the database, as my analysis was primarily concerned with date proximity rather than specific times. Any analysis done in SQL then re-cast these fields as date objects.
+
+I also was somewhat frustrated with the formatting requirements. I've developed some tools on top of R Markdown that allow me to generate interactive reports in self-contained HTML documents, but I wasn't able to develop a good pipeline for rendering these to a Word file. Realistically I know that using common media formats like .docx are necessary, but I certainly don't stop pushing for something a little better.
 
 Finally, time constraints made themselves known. I had originally intended to include data regarding fire incidents and to see if I could identify and correlations between the two sets, but manipulating and configuring the data ingestion ended up being too cumbersome to complete the full analysis.
 
